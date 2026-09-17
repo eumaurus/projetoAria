@@ -1,0 +1,123 @@
+O Projeto LUX foi criado do zero com a arquitetura em camadas e State Machine que você especificou. Resumo do que está pronto:
+
+Estrutura criada
+IA KAM/
+├── app/
+│   ├── agentes/consulta_agent.py
+│   ├── modelos/estado.py
+│   ├── orquestrador/orquestrador.py, roteador.py
+│   ├── prompts/consulta.txt, formatar_resposta.txt
+│   ├── servicos/ (config, base, logger, data, metadata, gemini, sql_executor, prompt, controle_acesso)
+│   └── container.py
+├── dados/          ← base_final.xlsx, rls.xlsx, dicionario_dados.xlsx (exemplo)
+├── logs/
+├── main.py
+├── streamlit_app.py
+├── requirements.txt
+├── .env.example
+└── scripts/gerar_dados_exemplo.py
+Fluxo implementado
+Pergunta
+Orquestrador
+ControleAcesso RLS
+Roteador
+ConsultaAgent
+PromptService
+GeminiService SQL
+SqlExecutor DuckDB
+GeminiService Resposta
+Separação de responsabilidades
+Agentes (ConsultaAgent) só orquestram lógica de negócio — nunca chamam Vertex AI ou DuckDB diretamente.
+Serviços encapsulam infraestrutura: GeminiService, SqlExecutor, DataService, etc.
+Injeção de dependência centralizada em app/container.py via construir_container().
+Estado (TypedDict) é a fonte de verdade única da State Machine.
+Como executar
+Configurar ambiente:
+
+copy .env.example .env
+Preencha GOOGLE_CLOUD_PROJECT e autentique no GCP (gcloud auth application-default login).
+
+Instalar dependências (máquina atual: Python 3.12.6 via py; 3.13 não está instalado):
+
+py -m pip install -r requirements.txt
+Dados de exemplo (já gerados; regerar se quiser):
+
+py scripts/gerar_dados_exemplo.py
+CLI:
+
+py main.py -p "Qual o total de vendas?" -e admin@lux.com
+Streamlit:
+
+py -m streamlit run streamlit_app.py
+Validação local
+Testei o pipeline até o Gemini: RLS, roteamento (CONSULTA) e montagem de prompt funcionam. O erro esperado sem .env configurado é:
+
+GOOGLE_CLOUD_PROJECT não configurado
+
+Componentes-chave
+Camada	Arquivo	Responsabilidade
+Modelo
+estado.py
+Estado, Intencao, NivelAcesso
+Serviço
+controle_acesso.py
+Valida e-mail/nível via rls.xlsx
+Serviço
+metadata_service.py
+Sinônimos → colunas (localizar_coluna)
+Serviço
+sql_executor.py
+DuckDB sobre DataFrames Pandas
+Orquestração
+orquestrador.py
+Fluxo completo da State Machine
+Agente
+consulta_agent.py
+_montar_prompt → _gerar_sql → executar
+E-mails de teste no rls.xlsx de exemplo: admin@lux.com (GOD), analista@lux.com (A), usuario@lux.com (B).
+
+
+Modo offline/mock do Gemini
+Nova variável GEMINI_MODO em .env:
+
+Valor	Comportamento
+mock
+Respostas simuladas localmente (sem Vertex AI)
+vertex
+Chamadas reais ao Gemini
+(omitido)
+Usa mock se GOOGLE_CLOUD_PROJECT estiver vazio; caso contrário, vertex
+Factory em criar_gemini_service() escolhe automaticamente a implementação. O GeminiMockService simula:
+
+SQL heurístico (totais, agrupamentos, top clientes)
+Respostas RAG a partir do contexto recuperado
+Interpretação analítica a partir das métricas calculadas
+Formatação de consultas a partir dos dados DuckDB
+Novos agentes
+Agente	Arquivo	Fluxo
+RagAgent
+app/agentes/rag_agent.py
+RagService → prompt rag.txt → Gemini
+AnalyticsAgent
+app/agentes/analytics_agent.py
+AnalyticsService → prompt analytics.txt → Gemini
+Novos serviços
+rag_service.py — busca semântica no dicionario_dados.xlsx
+analytics_service.py — agregações Pandas (soma, média, por região, top clientes, evolução mensal)
+gemini_mock_service.py — implementação offline
+Orquestração atualizada
+O Orquestrador agora roteia para os 3 agentes. O Roteador usa prioridade RAG → ANALYTICS → CONSULTA (ex.: “tendência de vendas” vai para AnalyticsAgent, não ConsultaAgent).
+
+Como testar localmente (sem GCP)
+Adicione ao seu .env:
+
+GEMINI_MODO=mock
+Exemplos de perguntas:
+
+py main.py -p "O que é TCV_Full?" -e admin@lux.com
+py main.py -p "Qual a tendência de vendas por região?" -e admin@lux.com
+py main.py -p "Qual o total de vendas por região?" -e admin@lux.com
+Ou via Streamlit (sidebar mostra o modo Gemini ativo):
+
+streamlit
+py -m streamlit run streamlit_app.py
